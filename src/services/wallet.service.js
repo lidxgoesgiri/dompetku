@@ -143,9 +143,9 @@ export function createWalletService(database) {
       const wallet = await walletForAccount(database(), accountId);
       return { balance: wallet.balance, currency: 'IDR' };
     },
-    async history(accountId) {
+    async history(accountId, { limit = 50, before } = {}) {
       const wallet = await walletForAccount(database(), accountId);
-      return database()('ledger_entries as l')
+      const query = database()('ledger_entries as l')
         .join('transactions as t', 't.id', 'l.transaction_id')
         .where('l.wallet_id', wallet.id)
         .select(
@@ -157,7 +157,18 @@ export function createWalletService(database) {
           't.created_at as createdAt',
         )
         .orderBy('t.id', 'desc')
-        .limit(50);
+        .limit(limit + 1);
+      if (before) query.where('t.id', '<', before);
+      const rows = await query;
+      const hasMore = rows.length > limit;
+      const transactions = rows.slice(0, limit);
+      return {
+        transactions,
+        pagination: {
+          hasMore,
+          nextCursor: hasMore ? transactions[transactions.length - 1].id : null,
+        },
+      };
     },
     topUp(accountId, input, key) {
       return execute(accountId, input, key, 'top_up');

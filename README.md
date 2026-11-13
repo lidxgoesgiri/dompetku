@@ -52,7 +52,7 @@ Migration kedua menambahkan indeks unik email case-insensitive. Jika database ya
 
 ## Operasi wallet
 
-Semua endpoint wallet membutuhkan `Authorization: Bearer <token>`. `GET /wallet` mengembalikan saldo dan `GET /wallet/transactions` mengembalikan maksimal 50 entri terbaru milik akun. Nominal dan saldo pada respons adalah string bilangan bulat rupiah agar presisi PostgreSQL bigint terjaga.
+Semua endpoint wallet membutuhkan `Authorization: Bearer <token>`. `GET /wallet` mengembalikan saldo dan `GET /wallet/transactions` mengembalikan riwayat milik akun, diurutkan berdasarkan ID transaksi dari terbesar ke terkecil. Nominal dan saldo pada respons adalah string bilangan bulat rupiah agar presisi PostgreSQL bigint terjaga.
 
 `POST /wallet/top-up` menerima `{"amount":1000}`. **Top-up ini hanya simulasi:** tidak ada pembayaran atau verifikasi dana eksternal, sehingga tidak boleh digunakan dengan uang sungguhan. `POST /wallet/transfer` menerima `{"amount":1000,"recipientAccountId":"2"}`. Kedua operasi memerlukan header `Idempotency-Key` yang tidak kosong dan unik per wallet pengirim; pengulangan dengan isi sama mengembalikan transaksi sebelumnya, sedangkan isi berbeda menghasilkan 409.
 
@@ -61,3 +61,7 @@ Nominal minimal Rp1.000; transfer dibatasi Rp2.000.000 per akun per hari kalende
 ## Pembatasan percobaan autentikasi
 
 Login dibatasi 10 permintaan per alamat IP per 15 menit dan registrasi 5 permintaan per alamat IP per 15 menit, termasuk permintaan yang berhasil atau tidak valid. Jika melewati batas, API mengembalikan HTTP 429 dan header `Retry-After`. Batas disimpan di memori tiap proses dan hilang saat proses dimulai ulang; ini belum cukup untuk banyak instance. Server tidak mempercayai header proxy secara default. Sebelum memakai reverse proxy atau beberapa instance, konfigurasi IP proxy terpercaya dan penyimpanan pembatasan bersama harus ditinjau dan diuji sesuai lingkungan deployment.
+
+## Pagination riwayat
+
+`GET /wallet/transactions?limit=50` mengembalikan maksimal 50 transaksi secara default; `limit` dapat diatur antara 1 dan 100. Respons menyertakan `pagination.hasMore` dan `pagination.nextCursor`. Untuk mengambil halaman berikutnya, kirim cursor tersebut sebagai `before`, misalnya `GET /wallet/transactions?limit=50&before=123`. Cursor adalah ID transaksi, bukan offset, dan hanya riwayat wallet dari token yang dapat dibaca. Saat `hasMore` bernilai false, `nextCursor` bernilai null. Data yang baru berkomitmen selama pagination tidak membentuk snapshot konsisten; muat ulang halaman pertama untuk melihat transaksi terbaru.

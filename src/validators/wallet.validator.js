@@ -11,3 +11,14 @@ export const transferSchema = z
   .object({ amount, recipientAccountId: accountId })
   .strict();
 export const keySchema = z.string().trim().min(1).max(255);
+
+export const historyQuerySchema = z
+  .object({
+    limit: z
+      .string()
+      .regex(/^(?:[1-9]|[1-9][0-9]|100)$/)
+      .transform(Number)
+      .optional(),
+    before: accountId.optional(),
+  })
+  .strict();

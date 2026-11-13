@@ -3,6 +3,7 @@ import {
   topUpSchema,
   transferSchema,
   keySchema,
+  historyQuerySchema,
 } from '../validators/wallet.validator.js';
 import { success } from '../utils/api-response.js';
 import { AppError } from '../utils/app-error.js';
@@ -26,9 +27,12 @@ export function walletRoutes(authenticate, service) {
   router.get('/', async (req, res) =>
     success(res, await service.balance(req.accountId)),
   );
-  router.get('/transactions', async (req, res) =>
-    success(res, { transactions: await service.history(req.accountId) }),
-  );
+  router.get('/transactions', async (req, res) => {
+    const result = historyQuerySchema.safeParse(req.query);
+    if (!result.success)
+      throw new AppError(400, 'INVALID_INPUT', 'Invalid history query');
+    return success(res, await service.history(req.accountId, result.data));
+  });
   router.post('/top-up', async (req, res) => {
     const result = await service.topUp(
       req.accountId,

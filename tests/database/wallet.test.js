@@ -135,6 +135,100 @@ describe('wallet transactions', () => {
     });
     expect(entries).toHaveLength(2);
   });
+  it('paginates ledger without duplicates and isolates wallet history', async () => {
+    for (let i = 0; i < 5; i++) expect((await topup(1000)).status).toBe(201);
+    const first = await request(app)
+      .get('/wallet/transactions?limit=2')
+      .set('Authorization', bearer(0));
+    expect(first.status).toBe(200);
+    expect(first.body.data.transactions).toHaveLength(2);
+    expect(first.body.data.pagination.hasMore).toBe(true);
+    const cursor = first.body.data.pagination.nextCursor;
+    expect(cursor).toBe(first.body.data.transactions[1].id);
+    await topup(1000);
+    const second = await request(app)
+      .get('/wallet/transactions')
+      .query({ limit: '2', before: cursor })
+      .set('Authorization', bearer(0));
+    const third = await request(app)
+      .get('/wallet/transactions')
+      .query({ limit: '2', before: second.body.data.pagination.nextCursor })
+      .set('Authorization', bearer(0));
+    expect(second.body.data.transactions).toHaveLength(2);
+    expect(third.body.data.transactions).toHaveLength(1);
+    expect(third.body.data.pagination).toEqual({
+      hasMore: false,
+      nextCursor: null,
+    });
+    const ids = [first, second, third].flatMap((response) =>
+      response.body.data.transactions.map((entry) => entry.id),
+    );
+    expect(new Set(ids).size).toBe(5);
+    const other = await request(app)
+      .get('/wallet/transactions')
+      .query({ limit: '2', before: cursor })
+      .set('Authorization', bearer(1));
+    expect(other.body.data).toEqual({
+      transactions: [],
+      pagination: { hasMore: false, nextCursor: null },
+    });
+  });
+  it('rejects invalid pagination values without exposing errors', async () => {
+    for (const query of [
+      { limit: '0' },
+      { limit: '101' },
+      { limit: '1e2' },
+      { before: 'invalid' },
+      { before: '9223372036854775808' },
+      { unknown: 'value' },
+      { limit: ['1', '2'] },
+    ]) {
+      const result = await request(app)
+        .get('/wallet/transactions')
+        .query(query)
+        .set('Authorization', bearer(0));
+      expect(result.status).toBe(400);
+      expect(result.body.error.code).toBe('INVALID_INPUT');
+    }
+  });
+  it('returns the first 50 items by default and exposes the next page', async () => {
+    const records = Array.from({ length: 51 }, () => ({
+      initiator_wallet_id: wallets[0],
+      type: 'top_up',
+      amount: '1000',
+      idempotency_key: randomUUID(),
+    }));
+    await db.transaction(async (trx) => {
+      const transactions = await trx('transactions')
+        .insert(records)
+        .returning('id');
+      await trx('ledger_entries').insert(
+        transactions.map((transaction, index) => ({
+          transaction_id: transaction.id,
+          wallet_id: wallets[0],
+          balance_before: String(index * 1000),
+          balance_after: String((index + 1) * 1000),
+        })),
+      );
+      await trx('wallets')
+        .where({ id: wallets[0] })
+        .update({ balance: '51000' });
+    });
+    const first = await request(app)
+      .get('/wallet/transactions')
+      .set('Authorization', bearer(0));
+    expect(first.body.data.transactions).toHaveLength(50);
+    expect(first.body.data.pagination.hasMore).toBe(true);
+    const next = await request(app)
+      .get('/wallet/transactions')
+      .query({ before: first.body.data.pagination.nextCursor })
+      .set('Authorization', bearer(0));
+    expect(next.body.data.transactions).toHaveLength(1);
+    expect(next.body.data.pagination).toEqual({
+      hasMore: false,
+      nextCursor: null,
+    });
+  });
   it('rejects amounts below minimum and transfers beyond balance without changes', async () => {
     expect((await topup(999)).status).toBe(400);
     const response = await transfer(1000);
