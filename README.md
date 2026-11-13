@@ -79,12 +79,3 @@ Jalankan `npm run db:seed:demo` secara eksplisit setelah mengatur `DEMO_SEED=ena
 `Dockerfile`, `compose.yaml`, `compose.test.yaml`, dan `Jenkinsfile` menyiapkan delapan tahap PRD: Checkout, Test, Build Image, Push Image, Backup DB, Migrate, Deploy, dan Smoke Test. Compose deployment memakai image Docker Hub, PostgreSQL 17, volume persisten, serta jaringan database internal. Test memakai project Compose terpisah. Build image, test PostgreSQL 17 dan smoke test runtime telah diuji pada project Docker lokal yang terisolasi; Jenkins, push Docker Hub dan webhook belum diverifikasi end-to-end. Tidak ada deployment ke lingkungan tim atau cloud yang telah dijalankan.
 
 Untuk Jenkins, gunakan job terpercaya dari branch main, agent Linux berlabel `dompetku-linux`, credential `dockerhub-credentials` dan secret file `dompetku-deploy-env` yang berisi `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD`, `JWT_SECRET`, dan `CORS_ORIGIN`. Namespace Docker Hub diambil dari username credential, sehingga webhook tidak membutuhkan parameter manual. Pastikan namespace Docker Hub dan credential cocok, agent dapat mengakses Docker serta port 8000, dan webhook GitHub serta Ngrok dikonfigurasi oleh tim. Backup diarsipkan sebelum migration; artifact dapat berisi data sensitif dan akses serta retensinya harus dibatasi. Jangan menjalankan `docker compose down --volumes` pada project deployment. Migration dijalankan terpisah; seed demo hanya melalui perintah eksplisit.
-
-## Dokumen serah-terima
-
-- [Kontrak API dan contoh request](docs/api.md).
-- [Matriks penerimaan backend T01–T28 dan keputusan kompatibilitas](docs/backend-acceptance.md).
-- [Panduan DevOps langkah demi langkah](docs/devops-handoff.md).
-- [Hasil verifikasi aktual dan batas bukti](docs/verification.md).
-
-Pada setup lokal pemilik proyek, database development telah dimigrasi setelah backup dan memiliki akun demo. Password demo disimpan di `.env.demo` yang diabaikan Git; secret JWT berada di `.env`. Kedua file tersebut bersifat lokal dan tidak tersedia saat clone baru. Gunakan panduan setup dan seed eksplisit untuk lingkungan teman atau deployment.

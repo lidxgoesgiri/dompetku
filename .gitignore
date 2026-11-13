@@ -151,3 +151,6 @@ vite.config.ts.timestamp-*
 # Database backups
 backups/
 *.dump
+
+# Local working notes and handoff documents
+/docs/
