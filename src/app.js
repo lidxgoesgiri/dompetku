@@ -8,6 +8,8 @@ import { parseEnv, parseAuthEnv } from './config/env.js';
 import { createAccountRepository } from './repositories/account.repository.js';
 import { createAuthService } from './services/auth.service.js';
 import { getDatabase } from './config/database.js';
+import { createWalletService } from './services/wallet.service.js';
+import { authenticate } from './middlewares/auth.middleware.js';
 export function createApp(
   env = parseEnv(process.env),
   checkDatabase = () => getDatabase().raw('select 1'),
@@ -23,7 +25,11 @@ export function createApp(
     repository,
     options.tokenConfig || (() => parseAuthEnv(process.env)),
   );
-  app.use(createRoutes(checkDatabase, service));
+  const walletService = createWalletService(options.database || getDatabase);
+  const authMiddleware = authenticate(
+    options.tokenConfig || (() => parseAuthEnv(process.env)),
+  );
+  app.use(createRoutes(checkDatabase, service, authMiddleware, walletService));
   app.use(notFound);
   app.use(errorHandler);
   return app;
