@@ -4,6 +4,7 @@ import {
   transferSchema,
   keySchema,
   historyQuerySchema,
+  amountSchema,
 } from '../validators/wallet.validator.js';
 import { success } from '../utils/api-response.js';
 import { AppError } from '../utils/app-error.js';
@@ -17,6 +18,11 @@ function parse(schema, value) {
     );
   return result.data;
 }
+function parseMutation(schema, value) {
+  if (!amountSchema.safeParse(value?.amount).success)
+    throw new AppError(400, 'INVALID_AMOUNT', 'Invalid amount');
+  return parse(schema, value);
+}
 export function walletRoutes(authenticate, service) {
   const router = Router();
   router.use(authenticate);
@@ -24,30 +30,38 @@ export function walletRoutes(authenticate, service) {
     res.set('Cache-Control', 'no-store');
     next();
   });
-  router.get('/', async (req, res) =>
+  router.get(['/', '/balance'], async (req, res) =>
     success(res, await service.balance(req.accountId)),
   );
-  router.get('/transactions', async (req, res) => {
+  router.get(['/transactions', '/ledger'], async (req, res) => {
     const result = historyQuerySchema.safeParse(req.query);
     if (!result.success)
       throw new AppError(400, 'INVALID_INPUT', 'Invalid history query');
     return success(res, await service.history(req.accountId, result.data));
   });
-  router.post('/top-up', async (req, res) => {
+  router.post(['/top-up', '/topups'], async (req, res) => {
     const result = await service.topUp(
       req.accountId,
-      parse(topUpSchema, req.body),
+      parseMutation(topUpSchema, req.body),
       parse(keySchema, req.get('Idempotency-Key')),
     );
-    return success(res, result, result.replayed ? 200 : 201);
+    return success(
+      res,
+      { ...result.transaction, ...result },
+      result.replayed ? 200 : 201,
+    );
   });
-  router.post('/transfer', async (req, res) => {
+  router.post(['/transfer', '/transfers'], async (req, res) => {
     const result = await service.transfer(
       req.accountId,
-      parse(transferSchema, req.body),
+      parseMutation(transferSchema, req.body),
       parse(keySchema, req.get('Idempotency-Key')),
     );
-    return success(res, result, result.replayed ? 200 : 201);
+    return success(
+      res,
+      { ...result.transaction, ...result },
+      result.replayed ? 200 : 201,
+    );
   });
   return router;
 }

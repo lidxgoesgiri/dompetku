@@ -20,6 +20,7 @@ const makeTransaction = (overrides = {}) => ({
   type: 'transfer',
   amount: 1000,
   idempotency_key: randomUUID(),
+  request_hash: '0'.repeat(64),
   ...overrides,
 });
 async function rejected(operation, code) {
@@ -122,6 +123,8 @@ describe('PostgreSQL schema', () => {
         s('ledger_entries').insert({
           transaction_id: transaction.id,
           wallet_id: wallets[0],
+          type: 'TRANSFER_OUT',
+          amount: 1000,
           balance_before: 0,
           balance_after: -1,
         }),
@@ -145,7 +148,7 @@ describe('PostgreSQL schema', () => {
       makeTransaction({ type: 'top_up', recipient_wallet_id: null }),
     );
   });
-  it('enforces idempotency per initiator and allows it for another wallet', async () => {
+  it('enforces idempotency globally across wallets', async () => {
     const key = randomUUID();
     await trx('transactions').insert(makeTransaction({ idempotency_key: key }));
     await rejected(
@@ -153,12 +156,16 @@ describe('PostgreSQL schema', () => {
         s('transactions').insert(makeTransaction({ idempotency_key: key })),
       '23505',
     );
-    await trx('transactions').insert(
-      makeTransaction({
-        initiator_wallet_id: wallets[1],
-        recipient_wallet_id: wallets[0],
-        idempotency_key: key,
-      }),
+    await rejected(
+      (s) =>
+        s('transactions').insert(
+          makeTransaction({
+            initiator_wallet_id: wallets[1],
+            recipient_wallet_id: wallets[0],
+            idempotency_key: key,
+          }),
+        ),
+      '23505',
     );
   });
   it('enforces wallet ownership, foreign keys and restricted deletes', async () => {
@@ -190,6 +197,8 @@ describe('PostgreSQL schema', () => {
     const debit = {
       transaction_id: transaction.id,
       wallet_id: wallets[0],
+      type: 'TRANSFER_OUT',
+      amount: 1000,
       balance_before: 5000,
       balance_after: 4000,
     };
@@ -198,6 +207,8 @@ describe('PostgreSQL schema', () => {
       {
         transaction_id: transaction.id,
         wallet_id: wallets[1],
+        type: 'TRANSFER_IN',
+        amount: 1000,
         balance_before: 0,
         balance_after: 1000,
       },

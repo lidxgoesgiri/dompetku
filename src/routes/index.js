@@ -9,8 +9,12 @@ export function createRoutes(
   walletService,
 ) {
   const router = Router();
+  const auth = authRoutes(authService);
+  const wallet = walletRoutes(authMiddleware, walletService);
   router.use(healthRoutes(checkDatabase));
-  router.use('/auth', authRoutes(authService));
-  router.use('/wallet', walletRoutes(authMiddleware, walletService));
+  router.use('/auth', auth);
+  router.use('/wallet', wallet);
+  router.use('/api', auth);
+  router.use('/api', wallet);
   return router;
 }

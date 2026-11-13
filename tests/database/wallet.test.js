@@ -197,6 +197,7 @@ describe('wallet transactions', () => {
       type: 'top_up',
       amount: '1000',
       idempotency_key: randomUUID(),
+      request_hash: '0'.repeat(64),
     }));
     await db.transaction(async (trx) => {
       const transactions = await trx('transactions')
@@ -206,6 +207,8 @@ describe('wallet transactions', () => {
         transactions.map((transaction, index) => ({
           transaction_id: transaction.id,
           wallet_id: wallets[0],
+          type: 'TOPUP',
+          amount: 1000,
           balance_before: String(index * 1000),
           balance_after: String((index + 1) * 1000),
         })),
@@ -232,7 +235,7 @@ describe('wallet transactions', () => {
   it('rejects amounts below minimum and transfers beyond balance without changes', async () => {
     expect((await topup(999)).status).toBe(400);
     const response = await transfer(1000);
-    expect(response.status).toBe(422);
+    expect(response.status).toBe(409);
     expect(response.body.error.code).toBe('INSUFFICIENT_BALANCE');
     expect(
       (await db('wallets').where({ id: wallets[0] }).first()).balance,
@@ -273,7 +276,7 @@ describe('wallet transactions', () => {
     await topup(2500000);
     expect((await transfer(2000000)).status).toBe(201);
     const result = await transfer(1000);
-    expect(result.status).toBe(422);
+    expect(result.status).toBe(409);
     expect(result.body.error.code).toBe('DAILY_LIMIT_EXCEEDED');
     expect(
       (await db('wallets').where({ id: wallets[0] }).first()).balance,
@@ -287,6 +290,7 @@ describe('wallet transactions', () => {
       type: 'transfer',
       amount: '2000000',
       idempotency_key: randomUUID(),
+      request_hash: '0'.repeat(64),
       created_at: db.raw(
         "(date_trunc('day', clock_timestamp() AT TIME ZONE 'Asia/Jakarta') AT TIME ZONE 'Asia/Jakarta') - interval '1 second'",
       ),
@@ -296,6 +300,37 @@ describe('wallet transactions', () => {
     expect(
       (await db('wallets').where({ id: wallets[0] }).first()).balance,
     ).toBe('2000');
+  });
+  it('resets the daily limit at midnight Jakarta using a controlled database clock', async () => {
+    let time = new Date('2026-01-01T16:59:59.000Z');
+    const clockApp = createApp(
+      { CORS_ORIGIN: 'http://localhost:3001' },
+      async () => {},
+      {
+        database: () => db,
+        tokenConfig: () => ({ JWT_SECRET: secret, JWT_EXPIRES_IN: '1h' }),
+        clock: async () => time,
+      },
+    );
+    const credit = await request(clockApp)
+      .post('/api/topups')
+      .set('Authorization', bearer(0))
+      .set('Idempotency-Key', randomUUID())
+      .send({ amount: 4000000 });
+    expect(credit.status).toBe(201);
+    const send = (amount) =>
+      request(clockApp)
+        .post('/api/transfers')
+        .set('Authorization', bearer(0))
+        .set('Idempotency-Key', randomUUID())
+        .send({ amount, receiverWalletId: wallets[1] });
+    expect((await send(2000000)).status).toBe(201);
+    expect((await send(1000)).body.error.code).toBe('DAILY_LIMIT_EXCEEDED');
+    time = new Date('2026-01-01T17:00:00.000Z');
+    expect((await send(2000000)).status).toBe(201);
+    expect(
+      (await db('wallets').where({ id: wallets[0] }).first()).balance,
+    ).toBe('0');
   });
   it('rolls back balance and transaction when ledger insertion fails', async () => {
     await db('wallets').where({ id: wallets[0] }).update({ balance: '5000' });
@@ -333,9 +368,84 @@ describe('wallet transactions', () => {
   it('serializes concurrent requests to prevent overspending', async () => {
     await topup(5000);
     const results = await Promise.all([transfer(4000), transfer(4000)]);
-    expect(results.map((r) => r.status).sort()).toEqual([201, 422]);
+    expect(results.map((r) => r.status).sort()).toEqual([201, 409]);
     const rows = await db('wallets').whereIn('id', wallets).orderBy('id');
     expect(rows.map((row) => row.balance)).toEqual(['1000', '4000']);
+  });
+  it('reserves idempotency globally for simultaneous different wallets without leaking results', async () => {
+    const key = randomUUID();
+    const requests = [0, 1].map((index) =>
+      request(app)
+        .post('/api/topups')
+        .set('Authorization', bearer(index))
+        .set('Idempotency-Key', key)
+        .send({ amount: 1000 }),
+    );
+    const results = await Promise.all(requests);
+    expect(results.map((r) => r.status).sort()).toEqual([201, 409]);
+    const denied = results.find((r) => r.status === 409);
+    expect(denied.body.error.code).toBe('IDEMPOTENCY_CONFLICT');
+    expect(denied.body).not.toHaveProperty('data');
+    const rows = await db('wallets').whereIn('id', wallets);
+    expect(
+      rows.map((row) => BigInt(row.balance)).reduce((a, b) => a + b, 0n),
+    ).toBe(1000n);
+    expect(
+      await db('transactions').where({ idempotency_key: key }),
+    ).toHaveLength(1);
+  });
+  it('enforces the daily cap under concurrent transfers', async () => {
+    await topup(3000000);
+    const results = await Promise.all([transfer(1500000), transfer(1500000)]);
+    expect(results.map((r) => r.status).sort()).toEqual([201, 409]);
+    expect(results.find((r) => r.status === 409).body.error.code).toBe(
+      'DAILY_LIMIT_EXCEEDED',
+    );
+    expect(
+      (await db('wallets').where({ id: wallets[0] }).first()).balance,
+    ).toBe('1500000');
+  });
+  it('supports the PRD API contract using wallet IDs and typed ledger', async () => {
+    const balance = await request(app)
+      .get('/api/balance')
+      .set('Authorization', bearer(0));
+    expect(balance.body.data.walletId).toBe(wallets[0]);
+    const topup = await request(app)
+      .post('/api/topups')
+      .set('Authorization', bearer(0))
+      .set('Idempotency-Key', randomUUID())
+      .send({ amount: 2000 });
+    expect(topup.status).toBe(201);
+    const result = await request(app)
+      .post('/api/transfers')
+      .set('Authorization', bearer(0))
+      .set('Idempotency-Key', randomUUID())
+      .send({ amount: 1000, receiverWalletId: wallets[1] });
+    expect(result.status).toBe(201);
+    expect(result.body.data.type).toBe('TRANSFER');
+    const transferRecord = await db('transactions')
+      .where({ id: result.body.data.transactionId })
+      .first();
+    expect(transferRecord.sender_wallet_id).toBe(wallets[0]);
+    expect(transferRecord.receiver_wallet_id).toBe(wallets[1]);
+    const topupRecord = await db('transactions')
+      .where({ id: topup.body.data.transactionId })
+      .first();
+    expect(topupRecord.sender_wallet_id).toBeNull();
+    expect(topupRecord.receiver_wallet_id).toBe(wallets[0]);
+    const history = await request(app)
+      .get('/api/ledger')
+      .set('Authorization', bearer(1));
+    expect(history.body.data.transactions[0]).toMatchObject({
+      type: 'TRANSFER_IN',
+      amount: '1000',
+    });
+    const longKey = await request(app)
+      .post('/api/topups')
+      .set('Authorization', bearer(0))
+      .set('Idempotency-Key', 'x'.repeat(129))
+      .send({ amount: 1000 });
+    expect(longKey.status).toBe(400);
   });
   it('serializes concurrent identical idempotency keys', async () => {
     const key = randomUUID();

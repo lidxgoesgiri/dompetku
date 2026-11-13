@@ -41,6 +41,7 @@
     "db:migrate": "knex migrate:latest",
     "db:rollback": "knex migrate:rollback",
     "db:seed": "knex seed:run",
-    "test:db": "vitest run --config vitest.database.config.js"
+    "test:db": "vitest run --config vitest.database.config.js",
+    "db:seed:demo": "node scripts/seed-demo.js"
   }
 }

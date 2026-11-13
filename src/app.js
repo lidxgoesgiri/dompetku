@@ -25,7 +25,10 @@ export function createApp(
     repository,
     options.tokenConfig || (() => parseAuthEnv(process.env)),
   );
-  const walletService = createWalletService(options.database || getDatabase);
+  const walletService = createWalletService(
+    options.database || getDatabase,
+    options.clock,
+  );
   const authMiddleware = authenticate(
     options.tokenConfig || (() => parseAuthEnv(process.env)),
   );

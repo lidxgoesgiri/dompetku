@@ -37,7 +37,11 @@ export function createAuthService(repository, tokenConfig) {
         subject: String(account.id),
         expiresIn: config.JWT_EXPIRES_IN,
       });
-      return { accessToken: token, tokenType: 'Bearer' };
+      return {
+        accessToken: token,
+        tokenType: 'Bearer',
+        expiresAt: new Date(jwt.decode(token).exp * 1000).toISOString(),
+      };
     },
   };
 }
