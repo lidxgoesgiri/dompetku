@@ -5,6 +5,7 @@ import {
 } from '../validators/auth.validator.js';
 import { success } from '../utils/api-response.js';
 import { AppError } from '../utils/app-error.js';
+import { authRateLimit } from '../middlewares/auth-rate-limit.middleware.js';
 function validate(schema, value) {
   const result = schema.safeParse(value);
   if (!result.success)
@@ -17,7 +18,7 @@ export function authRoutes(service) {
     res.set('Cache-Control', 'no-store');
     next();
   });
-  router.post('/register', async (req, res) => {
+  router.post('/register', authRateLimit(5), async (req, res) => {
     const account = await service.register(
       validate(registrationSchema, req.body),
     );
@@ -34,7 +35,7 @@ export function authRoutes(service) {
       201,
     );
   });
-  router.post('/login', async (req, res) =>
+  router.post('/login', authRateLimit(10), async (req, res) =>
     success(res, await service.login(validate(loginSchema, req.body))),
   );
   return router;

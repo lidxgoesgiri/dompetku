@@ -46,7 +46,7 @@ Tes database memakai rollback atau membersihkan data fixture yang dibuat setelah
 
 `POST /auth/register` menerima JSON `{"name":"Nama","email":"user@example.com","password":"password-aman"}`. Password harus minimal 8 karakter dan maksimal 72 byte UTF-8. Akun dan wallet saldo nol dibuat dalam satu transaksi; respons 201 hanya memuat data akun, tanpa hash. Email dinormalisasi menjadi huruf kecil dan harus unik tanpa membedakan kapitalisasi; email duplikat menghasilkan 409.
 
-`POST /auth/login` menerima `email` dan `password`, lalu mengembalikan access token JWT bertipe Bearer. Email tidak dikenal dan password salah menghasilkan respons 401 yang sama. Token berlaku selama `JWT_EXPIRES_IN`; refresh token, pencabutan token, dan pembatasan percobaan login belum tersedia. Konfigurasi tersebut harus ditambahkan sebelum deployment publik.
+`POST /auth/login` menerima `email` dan `password`, lalu mengembalikan access token JWT bertipe Bearer. Email tidak dikenal dan password salah menghasilkan respons 401 yang sama. Token berlaku selama `JWT_EXPIRES_IN`; refresh token dan pencabutan token belum tersedia. Keduanya perlu dipertimbangkan sebelum deployment publik.
 
 Migration kedua menambahkan indeks unik email case-insensitive. Jika database yang sudah berisi data memiliki email yang hanya berbeda kapitalisasi, migration akan gagal dan duplikasi harus ditangani secara manual sebelum dijalankan.
 
@@ -56,4 +56,8 @@ Semua endpoint wallet membutuhkan `Authorization: Bearer <token>`. `GET /wallet`
 
 `POST /wallet/top-up` menerima `{"amount":1000}`. **Top-up ini hanya simulasi:** tidak ada pembayaran atau verifikasi dana eksternal, sehingga tidak boleh digunakan dengan uang sungguhan. `POST /wallet/transfer` menerima `{"amount":1000,"recipientAccountId":"2"}`. Kedua operasi memerlukan header `Idempotency-Key` yang tidak kosong dan unik per wallet pengirim; pengulangan dengan isi sama mengembalikan transaksi sebelumnya, sedangkan isi berbeda menghasilkan 409.
 
-Nominal minimal Rp1.000; transfer dibatasi Rp2.000.000 per akun per hari kalender Asia/Jakarta. Saldo tidak boleh negatif. Debit, kredit, dan ledger ditulis dalam satu transaksi database. Aturan ini berlaku melalui API; akses langsung ke database harus dibatasi. Perlu penambahan pembatasan percobaan login, kontrol token, serta integrasi pembayaran sebelum deployment publik.
+Nominal minimal Rp1.000; transfer dibatasi Rp2.000.000 per akun per hari kalender Asia/Jakarta. Saldo tidak boleh negatif. Debit, kredit, dan ledger ditulis dalam satu transaksi database. Aturan ini berlaku melalui API; akses langsung ke database harus dibatasi. Perlu kontrol token yang lebih lengkap serta integrasi pembayaran sebelum deployment publik.
+
+## Pembatasan percobaan autentikasi
+
+Login dibatasi 10 permintaan per alamat IP per 15 menit dan registrasi 5 permintaan per alamat IP per 15 menit, termasuk permintaan yang berhasil atau tidak valid. Jika melewati batas, API mengembalikan HTTP 429 dan header `Retry-After`. Batas disimpan di memori tiap proses dan hilang saat proses dimulai ulang; ini belum cukup untuk banyak instance. Server tidak mempercayai header proxy secara default. Sebelum memakai reverse proxy atau beberapa instance, konfigurasi IP proxy terpercaya dan penyimpanan pembatasan bersama harus ditinjau dan diuji sesuai lingkungan deployment.
