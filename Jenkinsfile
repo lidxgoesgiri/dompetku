@@ -7,17 +7,19 @@ pipeline {
     buildDiscarder(logRotator(numToKeepStr: '20', artifactNumToKeepStr: '10'))
   }
   triggers { githubPush() }
-  parameters { string(name: 'DOCKERHUB_USER', defaultValue: '', description: 'Docker Hub namespace for DompetKu') }
   environment {
-    DOCKERHUB_USER = "${params.DOCKERHUB_USER}"
     SMOKE_URL = 'http://127.0.0.1:8000/health'
   }
   stages {
     stage('Checkout') {
       steps {
+        deleteDir()
         checkout scm
-        script {
-          if (!(params.DOCKERHUB_USER ==~ /[a-z0-9][a-z0-9_-]{0,29}/)) { error('Configure a valid Docker Hub namespace') }
+        withCredentials([usernamePassword(credentialsId: 'dockerhub-credentials', usernameVariable: 'DH_USER', passwordVariable: 'DH_PAT')]) {
+          script {
+            if (!(env.DH_USER ==~ /[a-z0-9][a-z0-9_-]{0,29}/)) { error('Configure a valid Docker Hub username in dockerhub-credentials') }
+            env.DOCKERHUB_USER = env.DH_USER
+          }
         }
         sh 'git rev-parse HEAD'
       }
@@ -75,7 +77,7 @@ pipeline {
             compose exec -T db pg_restore -l < "backups/dompetku-${BUILD_NUMBER}.dump" > /dev/null
           '''
         }
-        archiveArtifacts artifacts: 'backups/*.dump', fingerprint: true, allowEmptyArchive: false
+        archiveArtifacts artifacts: "backups/dompetku-${env.BUILD_NUMBER}.dump", fingerprint: true, allowEmptyArchive: false
       }
     }
     stage('Migrate') {
@@ -136,6 +138,10 @@ pipeline {
     always {
       sh '''#!/bin/sh
         set +e
+        if [ -f compose.test.yaml ]; then
+          job_id=$(printf '%s' "$JOB_NAME" | cksum | cut -d ' ' -f 1)
+          docker compose -p "dompetku-test-${job_id}-${BUILD_NUMBER}" -f compose.test.yaml down --volumes --remove-orphans
+        fi
         rm -f "backups/dompetku-${BUILD_NUMBER}.dump"
         exit 0
       '''

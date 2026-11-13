@@ -257,6 +257,94 @@ describe('wallet transactions', () => {
       .send({ amount: 1000 });
     expect(missing.status).toBe(400);
   });
+  it('rejects sender impersonation and access to another wallet through query parameters', async () => {
+    await topup(5000);
+    const response = await request(app)
+      .post('/api/transfers')
+      .set('Authorization', bearer(0))
+      .set('Idempotency-Key', randomUUID())
+      .send({
+        amount: 1000,
+        receiverWalletId: wallets[1],
+        senderWalletId: wallets[1],
+      });
+    expect(response.status).toBe(400);
+    const history = await request(app)
+      .get('/api/ledger')
+      .query({ walletId: wallets[0] })
+      .set('Authorization', bearer(1));
+    expect(history.status).toBe(400);
+    const rows = await db('wallets').whereIn('id', wallets).orderBy('id');
+    expect(rows.map((row) => row.balance)).toEqual(['5000', '0']);
+  });
+  it('rejects self-transfer and missing recipients without leaving successful transactions', async () => {
+    await topup(5000);
+    for (const [receiverWalletId, status] of [
+      [wallets[0], 400],
+      ['9223372036854775807', 404],
+    ]) {
+      const response = await request(app)
+        .post('/api/transfers')
+        .set('Authorization', bearer(0))
+        .set('Idempotency-Key', randomUUID())
+        .send({ amount: 1000, receiverWalletId });
+      expect(response.status).toBe(status);
+    }
+    expect(
+      await db('transactions').where({
+        initiator_wallet_id: wallets[0],
+        type: 'transfer',
+      }),
+    ).toHaveLength(0);
+    expect(
+      (await db('wallets').where({ id: wallets[0] }).first()).balance,
+    ).toBe('5000');
+  });
+  it('rejects invalid money types and empty keys without reserving transactions', async () => {
+    for (const amount of [
+      999,
+      -1,
+      0,
+      1000.5,
+      '1000',
+      Number.MAX_SAFE_INTEGER + 1,
+    ]) {
+      for (const path of ['/api/topups', '/api/transfers']) {
+        const body =
+          path === '/api/transfers'
+            ? { amount, receiverWalletId: wallets[1] }
+            : { amount };
+        const response = await request(app)
+          .post(path)
+          .set('Authorization', bearer(0))
+          .set('Idempotency-Key', randomUUID())
+          .send(body);
+        expect(response.status).toBe(400);
+        expect(response.body.error.code).toBe('INVALID_AMOUNT');
+      }
+    }
+    const empty = await topup(1000, '');
+    expect(empty.status).toBe(400);
+    expect(
+      await db('transactions').whereIn('initiator_wallet_id', wallets),
+    ).toHaveLength(0);
+    expect(
+      await db('ledger_entries').whereIn('wallet_id', wallets),
+    ).toHaveLength(0);
+  });
+  it('rejects bigint balance overflow without losing precision', async () => {
+    const balance = '9223372036854775800';
+    await db('wallets').where({ id: wallets[0] }).update({ balance });
+    const response = await topup(1000);
+    expect(response.status).toBe(409);
+    expect(response.body.error.code).toBe('BALANCE_LIMIT');
+    expect(
+      (await db('wallets').where({ id: wallets[0] }).first()).balance,
+    ).toBe(balance);
+    expect(
+      await db('transactions').where({ initiator_wallet_id: wallets[0] }),
+    ).toHaveLength(0);
+  });
   it('replays a matching key exactly once and rejects a changed payload', async () => {
     const key = randomUUID();
     const first = await topup(5000, key);
@@ -281,6 +369,12 @@ describe('wallet transactions', () => {
     expect(
       (await db('wallets').where({ id: wallets[0] }).first()).balance,
     ).toBe('500000');
+    expect(
+      await db('transactions').where({
+        initiator_wallet_id: wallets[0],
+        type: 'transfer',
+      }),
+    ).toHaveLength(1);
   });
   it('does not count transfers from the previous Jakarta calendar day', async () => {
     await topup(3000);
@@ -340,7 +434,7 @@ describe('wallet transactions', () => {
         "CREATE FUNCTION pg_temp.reject_wallet_ledger() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'forced failure'; END $$",
       );
       await outer.raw(
-        'CREATE TRIGGER reject_wallet_ledger BEFORE INSERT ON ledger_entries FOR EACH ROW EXECUTE FUNCTION pg_temp.reject_wallet_ledger()',
+        "CREATE TRIGGER reject_wallet_ledger BEFORE INSERT ON ledger_entries FOR EACH ROW WHEN (NEW.type = 'TRANSFER_IN') EXECUTE FUNCTION pg_temp.reject_wallet_ledger()",
       );
       const failingApp = createApp(
         { CORS_ORIGIN: 'http://localhost:3001' },
@@ -360,6 +454,9 @@ describe('wallet transactions', () => {
       expect(rows.map((row) => row.balance)).toEqual(['5000', '0']);
       expect(
         await outer('transactions').where({ initiator_wallet_id: wallets[0] }),
+      ).toHaveLength(0);
+      expect(
+        await outer('ledger_entries').whereIn('wallet_id', wallets),
       ).toHaveLength(0);
     } finally {
       await outer.rollback();
@@ -454,5 +551,41 @@ describe('wallet transactions', () => {
     expect(
       (await db('wallets').where({ id: wallets[0] }).first()).balance,
     ).toBe('1000');
+  });
+  it('processes parallel transfer replays exactly once with two ledger entries', async () => {
+    await topup(5000);
+    const key = randomUUID();
+    const results = await Promise.all([
+      transfer(1000, key),
+      transfer(1000, key),
+    ]);
+    expect(results.map((result) => result.status).sort()).toEqual([200, 201]);
+    expect(results[0].body.data.transaction).toEqual(
+      results[1].body.data.transaction,
+    );
+    const transactions = await db('transactions').where({
+      idempotency_key: key,
+    });
+    expect(transactions).toHaveLength(1);
+    expect(
+      await db('ledger_entries').where({ transaction_id: transactions[0].id }),
+    ).toHaveLength(2);
+    const rows = await db('wallets').whereIn('id', wallets).orderBy('id');
+    expect(rows.map((row) => row.balance)).toEqual(['4000', '1000']);
+  });
+  it('replays a transfer after funds are exhausted using the original ledger response', async () => {
+    await topup(1000);
+    const key = randomUUID();
+    const first = await transfer(1000, key);
+    const replay = await transfer(1000, key);
+    expect(first.status).toBe(201);
+    expect(replay.status).toBe(200);
+    expect(replay.body.data.transaction).toEqual(first.body.data.transaction);
+    expect(
+      (await db('wallets').where({ id: wallets[0] }).first()).balance,
+    ).toBe('0');
+    expect(
+      await db('transactions').where({ idempotency_key: key }),
+    ).toHaveLength(1);
   });
 });
