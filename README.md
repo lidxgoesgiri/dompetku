@@ -1,17 +1,17 @@
 # DompetKu
 
-DompetKu adalah backend aplikasi e-wallet untuk tugas besar Cloud Computing Kelompok 6. Status saat ini: **Phase 2 — Database Schema & Migration**. Skema awal dan pemeriksaan database tersedia; autentikasi, operasi wallet, transaksi, dan pipeline Jenkins belum diimplementasikan.
+DompetKu adalah backend aplikasi e-wallet untuk tugas besar Cloud Computing Kelompok 6. Status saat ini: **Phase 3 — Account Authentication**. Registrasi dan login tersedia; operasi top-up, transfer, riwayat transaksi, dan pipeline Jenkins belum diimplementasikan.
 
 ## Teknologi dan arsitektur
 
-Node.js (ES modules), Express, PostgreSQL, Knex, Zod, dotenv, Helmet, CORS, Vitest, Supertest, ESLint, Prettier, dan Nodemon. bcrypt dan JWT akan ditambahkan pada fase autentikasi. Aplikasi memisahkan konfigurasi, routing, middleware, dan utilitas dari proses server. Koneksi Knex dibuat secara lazy ketika dibutuhkan. Health check memeriksa koneksi PostgreSQL; migration awal dan seed contoh tersedia.
+Node.js (ES modules), Express, PostgreSQL, Knex, Zod, dotenv, Helmet, CORS, Vitest, Supertest, ESLint, Prettier, dan Nodemon. bcrypt digunakan untuk hash password dan JWT untuk token login. Aplikasi memisahkan konfigurasi, routing, middleware, dan utilitas dari proses server. Koneksi Knex dibuat secara lazy ketika dibutuhkan. Health check memeriksa koneksi PostgreSQL; migration awal dan seed contoh tersedia.
 
 ## Persyaratan dan instalasi
 
 - Node.js 24 dan npm; PostgreSQL diperlukan saat menggunakan perintah database.
 - Jalankan `npm ci`, salin `.env.example` ke `.env`, lalu sesuaikan konfigurasi. Jangan commit `.env`.
-- `PORT` harus berupa port valid, dan `CORS_ORIGIN` adalah origin frontend yang diizinkan. Health check memerlukan koneksi database; tes HTTP biasa menggunakan pemeriksaan database terisolasi. JWT secret belum digunakan.
-- Untuk perintah database, isi seluruh `DB_*` termasuk password yang sesuai. Gunakan database terpisah untuk testing: isi `DB_NAME` untuk database development dan `TEST_DB_NAME` dengan nama database test yang berbeda, lalu atur `NODE_ENV=test` atau pilih `--env test` untuk perintah Knex. Jangan gunakan database production untuk test. Pengaturan kredensial dan pembuatan database menjadi tanggung jawab lingkungan lokal. Variabel JWT hanya disiapkan untuk fase berikutnya.
+- `PORT` harus berupa port valid, dan `CORS_ORIGIN` adalah origin frontend yang diizinkan. Health check memerlukan koneksi database; tes HTTP biasa menggunakan pemeriksaan database terisolasi. Server memerlukan JWT_SECRET acak minimal 32 karakter; JWT_EXPIRES_IN default 1h dan menerima format seperti 30m, 1h, atau 1d. Jangan menyimpan secret asli dalam repository.
+- Untuk perintah database, isi seluruh `DB_*` termasuk password yang sesuai. Gunakan database terpisah untuk testing: isi `DB_NAME` untuk database development dan `TEST_DB_NAME` dengan nama database test yang berbeda, lalu atur `NODE_ENV=test` atau pilih `--env test` untuk perintah Knex. Jangan gunakan database production untuk test. Pengaturan kredensial dan pembuatan database menjadi tanggung jawab lingkungan lokal. Gunakan secret JWT yang unik dan kuat untuk setiap lingkungan.
 
 ## Perintah
 
@@ -41,3 +41,11 @@ Constraint skema saja belum menjamin transfer atomik, batas harian Rp2.000.000, 
 Migration dapat diterapkan dengan `npm run db:migrate` dan dikembalikan dengan `npm run db:rollback`; jalankan hanya terhadap database yang dituju. `npm run db:seed` menyediakan dua akun contoh dengan login dinonaktifkan dan saldo nol; seed hanya berjalan pada database test yang dikonfigurasi dengan `NODE_ENV=test`. Aturan bisnis belum diimplementasikan atau diuji end-to-end.
 
 Tes database menggunakan transaksi yang dibatalkan setelah tiap kasus. Siapkan database test terpisah, isi `TEST_DB_NAME`, lalu jalankan migration dengan `NODE_ENV=test` sebelum `npm run test:db`. Nama test dibandingkan dengan `DB_NAME`, tetapi konfigurasi dan hak akses PostgreSQL tetap harus memastikan server dan database test bukan production.
+
+## Registrasi dan login
+
+`POST /auth/register` menerima JSON `{"name":"Nama","email":"user@example.com","password":"password-aman"}`. Password harus minimal 8 karakter dan maksimal 72 byte UTF-8. Akun dan wallet saldo nol dibuat dalam satu transaksi; respons 201 hanya memuat data akun, tanpa hash. Email dinormalisasi menjadi huruf kecil dan harus unik tanpa membedakan kapitalisasi; email duplikat menghasilkan 409.
+
+`POST /auth/login` menerima `email` dan `password`, lalu mengembalikan access token JWT bertipe Bearer. Email tidak dikenal dan password salah menghasilkan respons 401 yang sama. Token berlaku selama `JWT_EXPIRES_IN`; endpoint terlindungi, refresh token, pencabutan token, dan pembatasan percobaan login belum tersedia. Konfigurasi tersebut harus ditambahkan sebelum deployment publik.
+
+Migration kedua menambahkan indeks unik email case-insensitive. Jika database yang sudah berisi data memiliki email yang hanya berbeda kapitalisasi, migration akan gagal dan duplikasi harus ditangani secara manual sebelum dijalankan.

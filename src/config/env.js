@@ -27,3 +27,13 @@ function validate(schema, input, label) {
 export const parseEnv = (input) => validate(schema, input, 'environment');
 export const parseDatabaseEnv = (input) =>
   validate(databaseSchema, input, 'database');
+
+const authSchema = z.object({
+  JWT_SECRET: z.string().min(32),
+  JWT_EXPIRES_IN: z
+    .string()
+    .regex(/^[1-9][0-9]{0,3}[smhd]$/)
+    .default('1h'),
+});
+export const parseAuthEnv = (input) =>
+  validate(authSchema, input, 'authentication');

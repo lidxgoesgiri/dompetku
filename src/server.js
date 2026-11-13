@@ -1,9 +1,10 @@
 import 'dotenv/config';
 import { createApp } from './app.js';
-import { parseEnv } from './config/env.js';
+import { parseEnv, parseAuthEnv } from './config/env.js';
 import { closeDatabase } from './config/database.js';
 try {
   const env = parseEnv(process.env);
+  parseAuthEnv(process.env);
   const server = createApp(env).listen(env.PORT, () =>
     console.log(
       'DompetKu listening on port ' + env.PORT + ' (' + env.NODE_ENV + ')',
