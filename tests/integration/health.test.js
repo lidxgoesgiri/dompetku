@@ -5,14 +5,31 @@ import { spawnSync } from 'node:child_process';
 import { createApp } from '../../src/app.js';
 import { errorHandler } from '../../src/middlewares/error.middleware.js';
 import { AppError } from '../../src/utils/app-error.js';
-const app = createApp({ CORS_ORIGIN: 'http://localhost:3001' });
+const app = createApp({ CORS_ORIGIN: 'http://localhost:3001' }, async () => {});
 describe('HTTP foundation', () => {
   it('returns the expected health response', async () => {
     const response = await request(app).get('/health');
     expect(response.status).toBe(200);
     expect(response.body).toEqual({
       success: true,
-      data: { status: 'ok', service: 'dompetku' },
+      data: { status: 'ok', service: 'dompetku', database: 'connected' },
+    });
+  });
+  it('reports a database failure without exposing details', async () => {
+    const failedApp = createApp(
+      { CORS_ORIGIN: 'http://localhost:3001' },
+      async () => {
+        throw new Error('sensitive details');
+      },
+    );
+    const response = await request(failedApp).get('/health');
+    expect(response.status).toBe(503);
+    expect(response.body).toEqual({
+      success: false,
+      error: {
+        code: 'DATABASE_UNAVAILABLE',
+        message: 'Database connection unavailable',
+      },
     });
   });
   it('returns a consistent 404', async () => {

@@ -5,7 +5,7 @@ for (const name of ['development', 'test', 'production']) {
   Object.defineProperty(configurations, name, {
     enumerable: true,
     get() {
-      return databaseConfig(process.env);
+      return databaseConfig(process.env, name);
     },
   });
 }
