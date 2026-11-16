@@ -15,6 +15,15 @@ pipeline {
       steps {
         deleteDir()
         checkout scm
+        // FIX 1: Checkout di Windows bisa mengubah LF menjadi CRLF (core.autocrlf=true),
+        // sehingga `prettier --check .` gagal di 47 file. Checkout ulang tanpa konversi.
+        sh '''#!/bin/sh
+          set -eu
+          git config core.autocrlf false
+          git config core.eol lf
+          git rm -r --cached -q .
+          git reset --hard -q
+        '''
         withCredentials([usernamePassword(credentialsId: 'dockerhub-credentials', usernameVariable: 'DH_USER', passwordVariable: 'DH_PAT')]) {
           script {
             if (!(env.DH_USER ==~ /[a-z0-9][a-z0-9_-]{0,29}/)) { error('Configure a valid Docker Hub username in dockerhub-credentials') }
@@ -28,6 +37,11 @@ pipeline {
       steps {
         sh '''#!/bin/sh
           set -eu
+          # FIX 2: pesan jelas kalau Docker Engine tidak berjalan.
+          if ! docker info > /dev/null 2>&1; then
+            echo 'ERROR: Docker daemon tidak dapat dihubungi. Jalankan Docker Desktop / Docker Engine di mesin Jenkins.'
+            exit 1
+          fi
           job_id=$(printf '%s' "$JOB_NAME" | cksum | cut -d ' ' -f 1)
           project="dompetku-test-${job_id}-${BUILD_NUMBER}"
           cleanup() { docker compose -p "$project" -f compose.test.yaml down --volumes --remove-orphans; }
@@ -88,7 +102,8 @@ pipeline {
             set -eu
             compose() { docker compose -p dompetku --env-file "$DEPLOY_ENV" "$@"; }
             image="$DOCKERHUB_USER/dompetku"
-            compose pull app
+            # FIX 3: `compose pull app` dihapus. Image sudah ada lokal (baru di-build dan di-push),
+            # dan pull tanpa login akan gagal kalau repo Docker Hub private.
             expected=$(docker image inspect --format '{{.Id}}' "$image:$BUILD_NUMBER")
             actual=$(docker image inspect --format '{{.Id}}' "$image:latest")
             test "$actual" = "$expected"
@@ -120,6 +135,7 @@ pipeline {
       steps {
         sh '''#!/bin/sh
           set -eu
+          status=000
           for i in $(seq 1 12); do
             status=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 5 "$SMOKE_URL") || status=000
             if [ "$status" = 200 ]; then echo 'Smoke Test HTTP 200'; exit 0; fi
