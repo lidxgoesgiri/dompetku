@@ -8,6 +8,7 @@ COPY . .
 
 FROM dependencies AS production-dependencies
 RUN npm prune --omit=dev
+RUN npm test
 
 FROM node:24-bookworm-slim AS runtime
 ENV NODE_ENV=production
