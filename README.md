@@ -81,3 +81,5 @@ Jalankan `npm run db:seed:demo` secara eksplisit setelah mengatur `DEMO_SEED=ena
 Untuk Jenkins, gunakan job terpercaya dari branch main, agent Linux berlabel `dompetku-linux`, credential `dockerhub-credentials` dan secret file `dompetku-deploy-env` yang berisi `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD`, `JWT_SECRET`, dan `CORS_ORIGIN`. Namespace Docker Hub diambil dari username credential, sehingga webhook tidak membutuhkan parameter manual. Pastikan namespace Docker Hub dan credential cocok, agent dapat mengakses Docker serta port 8000, dan webhook GitHub serta Ngrok dikonfigurasi oleh tim. Backup diarsipkan sebelum migration; artifact dapat berisi data sensitif dan akses serta retensinya harus dibatasi. Jangan menjalankan `docker compose down --volumes` pada project deployment. Migration dijalankan terpisah; seed demo hanya melalui perintah eksplisit.
 
 <!-- Webhook test 27 November 2026 -->
+
+<!-- Pengujian ulang GitHub Webhook oleh pradiptafauzi -->
